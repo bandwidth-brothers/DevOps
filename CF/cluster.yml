@@ -1,0 +1,217 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "ECS Cluster and Microservices"
+
+Parameters:
+  MicroserviceTemplateURL:
+    Description: S3 Bucket URL for Microservice CloudFormation Template
+    Type: String
+  VPC:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to host Fargate tasks inside
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet 1
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private Subnet 2
+  ContainerSecurityGroup:
+    Description: Container Security Group
+    Type: AWS::EC2::SecurityGroup::Id
+  # ApplicationLoadBalancer:
+  #   Description: Application Load Balancer
+  #   Type: AWS::ElasticLoadBalancingV2::LoadBalancer::Id
+  Listener:
+    Description: Application Load Balancer
+    Type: String
+
+Resources:
+  # FARGATE Cluster
+  ECSCluster:
+    Type: 'AWS::ECS::Cluster'
+    Properties:
+      ClusterName: CrumbsFargateCluster
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+        - CapacityProvider: FARGATE_SPOT
+          Weight: 1
+          
+  # Container Execution Role
+  ContainerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: Crumbs-ContainerExecutionRole
+      Description: Role for containers
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: CWLogsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+                Effect: Allow
+  
+  # Task Execution Role
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: Crumbs-TaskExecutionRole
+      Description: Role for tasks
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+
+  # Account Service
+  AuthService:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ServiceName: AuthService
+        ContainerName: authservice
+        ContainerPort: 8000
+        Cluster: !Ref ECSCluster
+        TaskExecutionRole: !Ref TaskExecutionRole
+        ContainerExecutionRole: !Ref ContainerExecutionRole
+        Priority: 2
+        VPC: !Ref VPC
+        PrivateSubnet1: !Ref PrivateSubnet1
+        PrivateSubnet2: !Ref PrivateSubnet2
+        Listener: !Ref Listener
+        ContainerSecurityGroup: !Ref ContainerSecurityGroup
+        ListenerRulePath: /auth/*,/login
+        HealthCheckPath: /auth/health
+        ImgUrl: "419106922284.dkr.ecr.us-east-2.amazonaws.com/auth-service-john"
+      TemplateURL: !Ref MicroserviceTemplateURL
+      TimeoutInMinutes: 30
+  
+  # Customer Service
+  CustomerService:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ServiceName: CustomerService
+        ContainerName: customerservice
+        ContainerPort: 8020
+        Cluster: !Ref ECSCluster
+        TaskExecutionRole: !Ref TaskExecutionRole
+        ContainerExecutionRole: !Ref ContainerExecutionRole
+        Priority: 3
+        VPC: !Ref VPC
+        PrivateSubnet1: !Ref PrivateSubnet1
+        PrivateSubnet2: !Ref PrivateSubnet2
+        Listener: !Ref Listener
+        ContainerSecurityGroup: !Ref ContainerSecurityGroup 
+        ListenerRulePath: /customers**
+        HealthCheckPath: /customers/health
+        ImgUrl: "419106922284.dkr.ecr.us-east-2.amazonaws.com/customer-service-john"
+      TemplateURL: !Ref MicroserviceTemplateURL
+      TimeoutInMinutes: 30
+
+  # Restaurant Service
+  # RestaurantService:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     Parameters:
+  #       ServiceName: RestaurantService
+  #       ContainerName: restaurantservice
+  #       ContainerPort: 8010
+  #       Cluster: !Ref ECSCluster
+  #       TaskExecutionRole: !Ref TaskExecutionRole
+  #       ContainerExecutionRole: !Ref ContainerExecutionRole
+  #       Priority: 4
+  #       VPC: !Ref VPC
+  #       PrivateSubnet1: !Ref PrivateSubnet1
+  #       PrivateSubnet2: !Ref PrivateSubnet2
+  #       Listener: !Ref Listener
+  #       ContainerSecurityGroup: !Ref ContainerSecurityGroup 
+  #       ListenerRulePath: /restaurants**
+  #       HealthCheckPath: /restaurants/health
+  #     TemplateURL: !Ref MicroserviceTemplateURL
+  #     TimeoutInMinutes: 30
+
+  # # Payment Service
+  # PaymentService:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     Parameters:
+  #       ServiceName: PaymentService
+  #       ContainerName: paymentservice
+  #       ContainerPort: 8090
+  #       Cluster: !Ref ECSCluster
+  #       TaskExecutionRole: !Ref TaskExecutionRole
+  #       ContainerExecutionRole: !Ref ContainerExecutionRole
+  #       Priority: 5
+  #       VPC: !Ref VPC
+  #       PrivateSubnet1: !Ref PrivateSubnet1
+  #       PrivateSubnet2: !Ref PrivateSubnet2
+  #       Listener: !Ref Listener
+  #       ContainerSecurityGroup: !Ref ContainerSecurityGroup 
+  #       ListenerRulePath: payment-service
+  #     TemplateURL: !Ref MicroserviceTemplateURL
+  #     TimeoutInMinutes: 30
+  
+  # # Email Service
+  # EmailService:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     Parameters:
+  #       ServiceName: EmailService
+  #       ContainerName: emailservice
+  #       ContainerPort: 8100
+  #       Cluster: !Ref ECSCluster
+  #       TaskExecutionRole: !Ref TaskExecutionRole
+  #       ContainerExecutionRole: !Ref ContainerExecutionRole
+  #       Priority: 6
+  #       VPC: !Ref VPC
+  #       PrivateSubnet1: !Ref PrivateSubnet1
+  #       PrivateSubnet2: !Ref PrivateSubnet2
+  #       Listener: !Ref Listener
+  #       ContainerSecurityGroup: !Ref ContainerSecurityGroup
+  #       ListenerRulePath: email-service
+  #     TemplateURL: !Ref MicroserviceTemplateURL
+  #     TimeoutInMinutes: 30
+  
+  # ALB Listener
+  # Listener:
+  #   Type: AWS::ElasticLoadBalancingV2::Listener
+  #   Properties:
+  #     DefaultActions:
+  #       - Type: forward
+  #         TargetGroupArn: !Ref DefaultTargetGroup
+  #     LoadBalancerArn: !Sub '{{resolve:secretsmanager:dev/crumbs/alb/arn:SecretString}}'
+  #     SslPolicy: ELBSecurityPolicy-2016-08
+  #     Port: 443
+  #     Protocol: HTTPS
+  #     Certificates:
+  #       - CertificateArn: !Sub '{{resolve:secretsmanager:dev/crumbs/listener/cert:SecretString}}'
+
+
+
+
+  # # Default Target Group
+  # DefaultTargetGroup:
+  #   Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  #   Properties:
+  #     HealthCheckPath: /auth/health
+  #     Name: default-tg
+  #     Protocol: HTTP
+  #     Port: 80
+  #     TargetType: ip
+  #     VpcId: !Ref VPC
