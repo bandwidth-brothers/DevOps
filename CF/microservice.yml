@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "In S3 | ECS Cluster and Microservices"
+
+Parameters:
+  ServiceName:
+    Description: Name of the microservice
+    Type: String
+  ContainerName:
+    Description: Name of the container
+    Type: String
+  ContainerPort:
+    Description: Port for the container
+    Type: Number
+  Cluster:
+    Description: Cluster to store service
+    Type: String
+  TaskExecutionRole:
+    Description: Task Execution Role
+    Type: String
+  ContainerExecutionRole:
+    Description: Container Execution Role
+    Type: String
+  Priority:
+    Description: Priority for Listener Rule
+    Type: Number
+  VPC:
+    Description: VPC
+    Type: String
+  PrivateSubnet1:
+    Description: Private Subnet 1
+    Type: String
+  PrivateSubnet2:
+    Description: Private Subnet 2
+    Type: String
+  Listener:
+    Description: Listener
+    Type: String
+  ContainerSecurityGroup:
+    Type: String
+    Description: Container Security Group
+  ListenerRulePath:
+    Type: CommaDelimitedList
+    Description: The path for the service
+  ImgUrl:
+    Type: String
+    Description: image url
+  HealthCheckPath:
+    Type: String
+    Description: HealthCheck Path
+  
+Resources:
+
+  # Microservice
+  Microservice:
+    Type: AWS::ECS::Service
+    DependsOn: ListenerRule
+    Properties:
+      ServiceName: !Ref ServiceName
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      DesiredCount: 1
+      HealthCheckGracePeriodSeconds: 300
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+          SecurityGroups:
+            - !Ref ContainerSecurityGroup
+      LoadBalancers:
+        - ContainerName: !Ref ContainerName
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref TargetGroup
+
+  # Target Group
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckTimeoutSeconds: 5
+      UnhealthyThresholdCount: 2
+      HealthyThresholdCount: 5
+      Name: !Sub '${ContainerName}-tg'
+      Protocol: HTTP
+      Port: !Ref ContainerPort
+      TargetType: ip
+      VpcId: !Ref VPC
+
+  # Listener Rule
+  ListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Conditions:
+        - Field: path-pattern
+          Values: !Ref ListenerRulePath
+            # - !Ref ListenerRulePath
+          # Values:
+          #   - !Sub '/${ListenerRulePath}/**'
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+      ListenerArn: !Ref Listener
+      Priority: !Ref Priority
+
+  # Fargate Task Definition for Service
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: 256
+      Memory: 512
+      RequiresCompatibilities:
+        - FARGATE
+      TaskRoleArn: !Ref TaskExecutionRole
+      ExecutionRoleArn: !Ref ContainerExecutionRole
+      ContainerDefinitions:
+        - Name: !Ref ContainerName
+          Image: !Ref ImgUrl
+        
+          # Image: !Sub '{{resolve:secretsmanager:image-url:SecretString:image-url}}/${ContainerName}'
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          Essential: true
+          # Environment:
+          #   - Name: DB_ENDPOINT
+          #     Value: !Sub '{{resolve:secretsmanager:DB_ENDPOINT:SecretString}}'
+          #   - Name: DB_USERNAME
+          #     Value: !Sub '{{resolve:secretsmanager:DB_USERNAME:SecretString}}'
+          #   - Name: DB_PASSWORD
+          #     Value: !Sub '{{resolve:secretsmanager:DB_PASSWORD:SecretString}}'
+          #   - Name: AWS_ACCESS_KEY_ID
+          #     Value: !Sub '{{resolve:secretsmanager:AWS_ACCESS_KEY_ID:SecretString}}'
+          #   - Name: AWS_SECRET_ACCESS_KEY
+          #     Value: !Sub '{{resolve:secretsmanager:AWS_SECRET_ACCESS_KEY:SecretString}}'
+          #   - Name: JWT_SECRET
+          #     Value: !Sub '{{resolve:secretsmanager:JWT_SECRET:SecretString}}'
+          #   - Name: GMAPS_API_KEY
+          #     Value: !Sub '{{resolve:secretsmanager:prod/crumbs/geo:SecretString}}'
+          #   - Name: STRIPE_API_KEY
+          #     Value: !Sub '{{resolve:secretsmanager:STRIPE_API_KEY:SecretString}}'
+          #   - Name: JWT_ISSUER
+          #     Value: !Sub '{{resolve:secretsmanager:JWT_ISSUER:SecretString}}'
+          #   - Name: JWT_AUDIENCE
+          #     Value: !Sub '{{resolve:secretsmanager:JWT_AUDIENCE:SecretString}}'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-create-group: true
+              awslogs-group: !Sub 'awslogs-${ContainerName}'
+              awslogs-region: us-east-2
+              awslogs-stream-prefix: !Sub '${ContainerName}'
+      NetworkMode: awsvpc
